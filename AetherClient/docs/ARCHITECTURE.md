@@ -1,0 +1,41 @@
+# Architecture notes
+
+## Application lifecycle
+
+`AetherLauncher` owns GLFW initialization, the window, the OpenGL context, the renderer, the world, and the fixed-step game loop. `InputBindings` maps gameplay and camera actions to keys or mouse buttons; `InputBindingStorage` loads and atomically writes a human-editable `keybindings.properties` file, while `GlfwWindow` adapts GLFW events to the platform-neutral input interface and releases its native callbacks on close. `PlayerInventory` has 36 item stacks, with nine hotbar slots; mining adds matching block items, placement consumes the selected stack, and number keys switch slots. Pressing `E` opens a four-row inventory grid with a 2×2 crafting area. Four Stone items craft one Polished Stone block; ingredients are returned when the screen closes, and crafting leaves them untouched when output capacity is unavailable. Clicking a main-inventory stack exchanges it with the selected hotbar stack, while movement and world interaction pause. Hovering a stack shows its readable `ItemNames` label in the window title. Each `BlockDefinition` includes a mining duration; Stone takes 0.5 seconds and Polished Stone takes 1.5 seconds. `BlockBreakingController` accumulates capped hold time for a stable ray target and resets when the target changes or input is released. The selected item/count and current mining progress appear in the window title. `PlayerProfileStorage` persists player position and all inventory slots in a checksummed atomic file. The render loop polls input, advances simulation in 50 ms steps, renders, and swaps buffers. Escape requests shutdown. The renderer and window are closed before GLFW terminates; world, player, and binding persistence run during launcher cleanup.
+
+## Threading and ownership
+
+GLFW window operations and OpenGL calls stay on the context-owning thread. `ChunkMeshingService` uses a bounded CPU worker pool with immutable section/world snapshots. Worker tasks produce CPU meshes only; the render thread uploads completed meshes. Per-chunk revisions discard results invalidated while work is in flight. `GlResourceRegistry` closes registered graphics resources in reverse registration order and aggregates disposal failures.
+
+## World and chunks
+
+`ChunkSection` stores a 16×16×16 block section. `ChunkWorld` resolves world coordinates with floor division/modulo, so negative positions map correctly. `ChunkMesher` emits indexed quads and omits faces hidden by opaque neighbors, including neighboring sections. The starter world is a small locally generated height field; this is not Minecraft terrain generation or streaming.
+
+The world file is versioned, checksummed, size-validated, and replaced atomically after writing a temporary file. The default path is `saves/default/world.aether` relative to the process working directory. When a section leaves the active window, `ChunkStore` writes it as a separate checksummed world file under `saves/default/chunks`; loading validates its key before installation.
+
+`BlockLightEngine` computes an immutable snapshot of local block-emission light across loaded sections. Light loses one level per air block and does not enter opaque blocks. `SkyLightEngine` computes top-down direct sky light through loaded vertical section columns. The renderer combines both maps and stores sampled face light in mesh vertices. Indirect/colored lighting is not implemented.
+
+`ChunkWorld.revision()` changes when content is modified through `setBlock`, `putSection`, or `unload`. The renderer notices the change, recomputes light, and rebuilds its currently visible meshes asynchronously. `GlResourceRegistry.release()` removes replaced GPU meshes from the ownership registry after closing them. Mutating a `ChunkSection` returned by the low-level accessors bypasses world revision tracking; runtime edits should use `ChunkWorld.setBlock`.
+
+## Rendering
+
+The launcher depends on the backend-neutral `ClientRenderer` contract and selects `OpenGLRenderer` through `OpenGLRendererFactory`. `OpenGLRenderer` compiles its GLSL 330 program, selects loaded sections in a bounded square around the player, submits meshes to the bounded CPU service, uploads indexed meshes, and draws terrain and a simple player box. World changes recompute light and rebuild visible meshes; crossing a chunk boundary adjusts the visible loaded set. An isometric projection maps the demo world to the window; a depth buffer resolves overlapping faces. The contract is a small injection seam, not yet a general-purpose rendering abstraction or complete render graph.
+
+`OpenGLRenderTarget` owns its framebuffer and attachment textures. It validates framebuffer completeness and replaces attachments transactionally on resize while restoring prior GL bindings. All GL resources must be closed while their context is current and on the owning thread.
+
+`OpenGLHud` draws the selected hotbar slot and occupied-item markers after the world pass. Its pixel-aligned layout is generated by the CPU-side `HotbarLayout`; the overlay owns a streaming vertex buffer and GLSL program through the renderer's resource registry.
+
+## Shader loading
+
+`ShaderSourceLoader` resolves classpath shader resources beneath `assets/aether/shaders`. Includes are relative to the including file. Paths escaping the shader root and include cycles are rejected. Root `#version` is validated, included `#version` directives are disallowed, and `#line` markers aid diagnostics.
+
+## Network status slice
+
+`MinecraftStatusClient` connects to a Java server, sends a protocol 766 handshake with status intent, requests the raw status JSON, then performs a nonce-checked ping/pong. `ProtocolIO` bounds packet frames and strings, validates canonical five-byte VarInts, and rejects truncated or invalid UTF-8 input. This path does not enable compression, encryption, authentication, or the Login/Play states.
+
+## Current boundaries
+
+`ChunkVisibility` selects horizontal columns in a bounded square around the player. `ChunkStreamingController` asynchronously generates missing demo sections through a fixed worker pool and bounded queue, discards requests that leave the window, and delegates chunk-file reads and writes to one storage thread. An outgoing section remains available until its checksummed atomic save finishes; a returning section is read from storage before generation is considered. Shutdown drains queued storage work for up to 30 seconds. Generation requests use globally unique revisions; completed and invalidated request tracking is retired to prevent growth as the player travels. The demo generator is bounded to eight chunks from the origin. Mouse picking uses a grid DDA ray; left and right clicks mine and place through revision-tracked world edits.
+
+The prototype has no Minecraft login/authentication or Play-state protocol, official game asset loading, indirect lighting, Vulkan backend, production mod API, or compatibility adapters. Only the server-list status protocol is implemented.

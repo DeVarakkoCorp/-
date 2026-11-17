@@ -1,0 +1,13 @@
+AETHER CLIENT HANDOFF
+====================
+
+This is an independent Java 21 / LWJGL prototype. Read README.md and docs/STATUS.md before continuing. The project is not a complete Minecraft client and contains no Mojang code or game assets.
+
+Windows workspace build and run:
+  . C:\чатгпт\AetherClient\dev-env.ps1
+  Invoke-AetherGradle clean build
+  Invoke-AetherGradle run
+
+Verified on 2026-11-10 in the current Windows environment: all 117 JUnit tests pass. The GLFW/OpenGL window starts and exits cleanly, displaying generated terrain, a player mesh, and a nine-slot hotbar overlay. The inventory and crafting panel opens and closes with `E`; numeric stack counts and the crafting panel were visually confirmed. Mouse input placed four ingredients and crafted Polished Stone successfully. Hovering an occupied inventory slot showed its readable item name in the window title. The mouse-based inventory stack exchange has unit/layout coverage but its runtime click was not confirmed. The world file remained unchanged; the original 64 Stone hotbar stack and selected slot were restored afterward while preserving player coordinates. Earlier mouse mining/placement was verified through saved block edits before mining changed to a hold action; held mining has unit coverage but was not exercised with a held mouse in the desktop runtime. Block-specific mining times are configured (Stone 0.5 s, Polished Stone 1.5 s). A 20-cycle asynchronous unload/reload stress test preserves edits without storage errors. Movement, camera, zoom, mining, placement, hotbar selection, inventory toggle, and persistent input bindings are implemented. The launcher depends on a backend-neutral renderer interface and OpenGL factory; no other backend exists yet. The Java protocol 766 status handshake and ping/pong pass a loopback-server test; no live external server was queried. World revisions rebuild visible meshes and release replaced GPU resources; per-section reads and writes now run on a dedicated storage thread, failed saves preserve loaded sections, and storage errors are visible in the window title. OpenGL diagnostics report Intel UHD on the current environment; the target Huawei laptop has not been confirmed or tested.
+
+Next broad development areas are a graphical keybinding editor, protocol Login/Play states and authentication, a backend-neutral renderer/Vulkan, audio/UI, and a documented mod API. Scope each independently and preserve the clean-room policy.
